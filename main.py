@@ -1,63 +1,64 @@
 import streamlit as st
 import torch
+import torchaudio
 from audiocraft.models import MusicGen
 from audiocraft.data.audio import audio_write
 import os
 import base64
 
-# Function to generate audio
-def generate_audio(model, prompt, duration, topk, topp, temperature, cfg_coef):
-    output = model.generate(
-        descriptions=[prompt],
-        duration=duration,
-        top_k=topk,
-        top_p=topp,
-        temperature=temperature,
-        cfg_coef=cfg_coef
-    )
-    return output[0]
+def generate_music(model, description, duration):
+    model.set_generation_params(duration=duration)
+    wav = model.generate([description])  # Generate 1 sample
+    return wav[0]
 
-# Function to get playable audio
-def get_playable_audio(audio_array):
-    sample_rate = 32000
-    audio_path = "output.wav"
-    audio_write(audio_path, audio_array.cpu(), sample_rate, strategy="loudness", loudness_compressor=True)
+def get_audio_player(audio_data):
+    audio_file = "temp_audio.wav"
+    torchaudio.save(audio_file, audio_data.cpu(), sample_rate=32000)
     
-    with open(audio_path, "rb") as f:
+    with open(audio_file, "rb") as f:
         audio_bytes = f.read()
     
-    audio_base64 = base64.b64encode(audio_bytes).decode()
-    audio_tag = f'<audio autoplay controls><source src="data:audio/wav;base64,{audio_base64}" type="audio/wav"></audio>'
-    return audio_tag
+    os.remove(audio_file)
+    
+    b64 = base64.b64encode(audio_bytes).decode()
+    return f'<audio controls><source src="data:audio/wav;base64,{b64}" type="audio/wav"></audio>'
 
-# Main Streamlit app
 def main():
-    st.set_page_config(page_title="SunnAI - AI Music Generation", page_icon="🎵")
+    st.set_page_config(page_title="SunnAI - Music Generation", page_icon="🎵")
     st.title("SunnAI - AI Music Generation")
 
-    # Load the model
-    @st.cache_resource
-    def load_model():
-        return MusicGen.get_pretrained('small')
-    
-    model = load_model()
+    st.sidebar.header("Model Settings")
+    model_size = st.sidebar.selectbox("Select model size", ["small", "medium", "large"])
 
-    # User input
-    prompt = st.text_input("Enter a description for the music you want to generate:")
-    duration = st.slider("Duration (in seconds)", min_value=1, max_value=30, value=10)
-    topk = st.slider("Top-k", min_value=1, max_value=500, value=250)
-    topp = st.slider("Top-p", min_value=0.0, max_value=1.0, value=0.0, step=0.01)
-    temperature = st.slider("Temperature", min_value=0.1, max_value=1.0, value=1.0, step=0.1)
-    cfg_coef = st.slider("Classifier Free Guidance", min_value=1, max_value=10, value=3)
+    @st.cache_resource
+    def load_model(model_size):
+        return MusicGen.get_pretrained(f'facebook/musicgen-{model_size}')
+
+    model = load_model(model_size)
+
+    st.write("Welcome to SunnAI! Generate music using AI with just a text description.")
+
+    description = st.text_area("Enter a description for your music:", "A happy rock song with electric guitar and drums")
+    duration = st.slider("Select music duration (in seconds):", min_value=1, max_value=30, value=10)
 
     if st.button("Generate Music"):
-        if prompt:
-            with st.spinner("Generating music..."):
-                output = generate_audio(model, prompt, duration, topk, topp, temperature, cfg_coef)
-                audio_tag = get_playable_audio(output)
-                st.markdown(audio_tag, unsafe_allow_html=True)
-        else:
-            st.warning("Please enter a description for the music.")
+        with st.spinner("Generating music... This may take a moment."):
+            generated_audio = generate_music(model, description, duration)
+        
+        st.success("Music generated successfully!")
+        st.markdown(get_audio_player(generated_audio), unsafe_allow_html=True)
+        
+        # Option to download the generated audio
+        audio_file = "generated_music.wav"
+        torchaudio.save(audio_file, generated_audio.cpu(), sample_rate=32000)
+        with open(audio_file, "rb") as f:
+            st.download_button(
+                label="Download generated music",
+                data=f,
+                file_name="sunnai_generated_music.wav",
+                mime="audio/wav"
+            )
+        os.remove(audio_file)
 
 if __name__ == "__main__":
     main()
